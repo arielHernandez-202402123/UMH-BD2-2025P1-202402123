@@ -1,0 +1,6 @@
+SELECT t1.Country, t1.Product, t1.SalePrice, t1.ManufacturingPrice, t2.exchange_rate
+FROM financialsample as t1
+Inner join currencies as t2
+ on t1.Country = t2.Country
+where t1.Country ='Mexico' and t1.Year = 2014 and t1.MonthNumber in (1,2)
+Order by Date ASC;
