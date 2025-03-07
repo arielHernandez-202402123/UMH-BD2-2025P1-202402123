@@ -1,0 +1,43 @@
+/*ARIEL HERNANDEZ 202402123*/
+
+CREATE TABLE IF NOT EXISTS transacciones (  
+    numTransaccion INT AUTO_INCREMENT PRIMARY KEY,  
+    Mes INT,  
+    Monto DECIMAL(10, 2),  
+    SaldoAcumulado DECIMAL(10, 2)  
+);  
+
+DROP PROCEDURE IF EXISTS simulador_ahorro;
+DELIMITER //  
+
+CREATE PROCEDURE simulador_ahorro (  
+    IN p_monto DECIMAL(10,2),  
+    IN p_meses INT  
+)  
+BEGIN  
+    DECLARE v_mes INT DEFAULT 1;  
+    DECLARE v_saldo_acumulado DECIMAL(10,2) DEFAULT 0.00;  
+    
+    WHILE v_mes <= p_meses DO  
+
+        SET v_saldo_acumulado = v_saldo_acumulado + p_monto;  
+        
+        INSERT INTO transacciones (Mes, Monto, SaldoAcumulado)  
+        VALUES (v_mes, p_monto, v_saldo_acumulado);  
+ 
+        SET v_mes = v_mes + 1;  
+    END WHILE;  
+
+    SELECT * FROM transacciones;  
+ 
+
+END //  
+
+DELIMITER ; 
+
+CALL simulador_ahorro(550.00, 8); /* El procedimiento incluye el llamado a la tabla*/
+
+/*Limpiar Tabla*/
+TRUNCATE TABLE transacciones; 
+
+SELECT * FROM transacciones; /* Opcional, llamar tabla por separado para validar si se limpio*/
