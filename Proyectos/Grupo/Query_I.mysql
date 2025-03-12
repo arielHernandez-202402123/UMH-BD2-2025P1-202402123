@@ -1,0 +1,673 @@
+-- Creación de la base de datos
+CREATE DATABASE IF NOT EXISTS sistema_reservas_hotel;
+USE sistema_reservas_hotel;
+
+-- Tabla Participante
+CREATE TABLE IF NOT EXISTS Participante (
+    id_participante INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    apellido VARCHAR(100) NOT NULL,
+    organizacion VARCHAR(150),
+    cargo VARCHAR(100),
+    num_pasaporte VARCHAR(50),
+    fecha_nacimiento DATE,
+    nacionalidad VARCHAR(50),
+    direccion VARCHAR(200),
+    ciudad VARCHAR(100),
+    pais VARCHAR(100),
+    telefono VARCHAR(30),
+    fax VARCHAR(30),
+    email VARCHAR(150),
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabla Hotel
+CREATE TABLE IF NOT EXISTS Hotel (
+    id_hotel INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_hotel VARCHAR(150) NOT NULL,
+    direccion_hotel VARCHAR(200),
+    contacto_nombre VARCHAR(100),
+    contacto_cargo VARCHAR(100),
+    telefono VARCHAR(30),
+    fax VARCHAR(30),
+    email VARCHAR(150),
+    activo BOOLEAN DEFAULT TRUE
+);
+
+-- Tabla TipoHabitacion
+CREATE TABLE IF NOT EXISTS TipoHabitacion (
+    id_tipo_habitacion INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_tipo VARCHAR(50) NOT NULL,
+    descripcion TEXT,
+    capacidad INT DEFAULT 1
+);
+
+-- Tabla PrecioHabitacion
+CREATE TABLE IF NOT EXISTS PrecioHabitacion (
+    id_precio INT AUTO_INCREMENT PRIMARY KEY,
+    id_hotel INT NOT NULL,
+    id_tipo_habitacion INT NOT NULL,
+    precio_single DECIMAL(10,2) NOT NULL,
+    precio_doble DECIMAL(10,2) NOT NULL,
+    precio_twin DECIMAL(10,2) NOT NULL,
+    moneda VARCHAR(3) DEFAULT 'USD',
+    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_hotel) REFERENCES Hotel(id_hotel),
+    FOREIGN KEY (id_tipo_habitacion) REFERENCES TipoHabitacion(id_tipo_habitacion)
+);
+
+-- Tabla Habitacion
+CREATE TABLE IF NOT EXISTS Habitacion (
+    id_habitacion INT AUTO_INCREMENT PRIMARY KEY,
+    id_hotel INT NOT NULL,
+    numero_habitacion VARCHAR(10) NOT NULL,
+    id_tipo_habitacion INT NOT NULL,
+    piso INT,
+    estado ENUM('disponible', 'ocupada', 'mantenimiento') DEFAULT 'disponible',
+    notas TEXT,
+    FOREIGN KEY (id_hotel) REFERENCES Hotel(id_hotel),
+    FOREIGN KEY (id_tipo_habitacion) REFERENCES TipoHabitacion(id_tipo_habitacion),
+    UNIQUE KEY hotel_habitacion_unique (id_hotel, numero_habitacion)
+);
+
+-- Tabla DisponibilidadHabitacion
+CREATE TABLE IF NOT EXISTS DisponibilidadHabitacion (
+    id_disponibilidad INT AUTO_INCREMENT PRIMARY KEY,
+    id_hotel INT NOT NULL,
+    id_tipo_habitacion INT NOT NULL,
+    fecha DATE NOT NULL,
+    habitaciones_existentes INT NOT NULL,
+    habitaciones_ocupadas INT NOT NULL DEFAULT 0,
+    habitaciones_disponibles INT GENERATED ALWAYS AS (habitaciones_existentes - habitaciones_ocupadas) STORED,
+    temporada ENUM('alta', 'baja', 'especial') DEFAULT 'baja',
+    FOREIGN KEY (id_hotel) REFERENCES Hotel(id_hotel),
+    FOREIGN KEY (id_tipo_habitacion) REFERENCES TipoHabitacion(id_tipo_habitacion),
+    UNIQUE KEY disponibilidad_fecha_unique (id_hotel, id_tipo_habitacion, fecha)
+);
+
+-- Tabla Reserva
+CREATE TABLE IF NOT EXISTS Reserva (
+    id_reserva INT AUTO_INCREMENT PRIMARY KEY,
+    codigo_reserva VARCHAR(15) UNIQUE,
+    id_participante INT NOT NULL,
+    id_hotel INT NOT NULL,
+    id_tipo_habitacion INT NOT NULL,
+    id_habitacion INT,
+    fecha_arribo DATE NOT NULL,
+    fecha_salida DATE NOT NULL,
+    num_noches INT GENERATED ALWAYS AS (DATEDIFF(fecha_salida, fecha_arribo)) STORED,
+    vuelo_arribo VARCHAR(50),
+    vuelo_salida VARCHAR(50),
+    early_check_in BOOLEAN DEFAULT FALSE,
+    estado_reserva ENUM('pendiente', 'confirmada', 'check-in', 'check-out', 'cancelada') DEFAULT 'pendiente',
+    notas TEXT,
+    fecha_reserva TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_participante) REFERENCES Participante(id_participante),
+    FOREIGN KEY (id_hotel) REFERENCES Hotel(id_hotel),
+    FOREIGN KEY (id_tipo_habitacion) REFERENCES TipoHabitacion(id_tipo_habitacion),
+    FOREIGN KEY (id_habitacion) REFERENCES Habitacion(id_habitacion)
+);
+
+-- Tabla MetodoPago
+CREATE TABLE IF NOT EXISTS MetodoPago (
+    id_pago INT AUTO_INCREMENT PRIMARY KEY,
+    id_reserva INT NOT NULL,
+    tipo_tarjeta ENUM('AMEX', 'VISA', 'Mastercard', 'Diners') NOT NULL,
+    numero_tarjeta VARCHAR(30) NOT NULL,
+    fecha_vencimiento DATE NOT NULL,
+    nombre_titular VARCHAR(150) NOT NULL,
+    firma_titular BOOLEAN DEFAULT FALSE,
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_reserva) REFERENCES Reserva(id_reserva)
+);
+
+-- ======== PROCEDIMIENTOS ALMACENADOS ========
+
+-- Procedimiento para insertar un nuevo participante
+DELIMITER //
+CREATE PROCEDURE sp_insertar_participante(
+    IN p_nombre VARCHAR(100),
+    IN p_apellido VARCHAR(100),
+    IN p_organizacion VARCHAR(150),
+    IN p_cargo VARCHAR(100),
+    IN p_num_pasaporte VARCHAR(50),
+    IN p_fecha_nacimiento DATE,
+    IN p_nacionalidad VARCHAR(50),
+    IN p_direccion VARCHAR(200),
+    IN p_ciudad VARCHAR(100),
+    IN p_pais VARCHAR(100),
+    IN p_telefono VARCHAR(30),
+    IN p_fax VARCHAR(30),
+    IN p_email VARCHAR(150),
+    OUT p_id_participante INT
+)
+BEGIN
+    INSERT INTO Participante(
+        nombre, apellido, organizacion, cargo, num_pasaporte,
+        fecha_nacimiento, nacionalidad, direccion, ciudad,
+        pais, telefono, fax, email
+    ) VALUES (
+        p_nombre, p_apellido, p_organizacion, p_cargo, p_num_pasaporte,
+        p_fecha_nacimiento, p_nacionalidad, p_direccion, p_ciudad,
+        p_pais, p_telefono, p_fax, p_email
+    );
+    
+    SET p_id_participante = LAST_INSERT_ID();
+END //
+DELIMITER ;
+
+-- Procedimiento para verificar disponibilidad de habitaciones
+DELIMITER //
+CREATE PROCEDURE sp_verificar_disponibilidad(
+    IN p_id_hotel INT,
+    IN p_id_tipo_habitacion INT,
+    IN p_fecha_arribo DATE,
+    IN p_fecha_salida DATE,
+    OUT p_disponible BOOLEAN,
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_dias_sin_disponibilidad INT DEFAULT 0;
+    DECLARE v_fecha_actual DATE;
+    
+    SET v_fecha_actual = p_fecha_arribo;
+    SET p_disponible = TRUE;
+    
+    -- Verificamos disponibilidad para cada día del rango de fechas
+    WHILE v_fecha_actual < p_fecha_salida DO
+        IF NOT EXISTS (
+            SELECT 1 FROM DisponibilidadHabitacion
+            WHERE id_hotel = p_id_hotel
+            AND id_tipo_habitacion = p_id_tipo_habitacion
+            AND fecha = v_fecha_actual
+            AND habitaciones_disponibles > 0
+        ) THEN
+            SET v_dias_sin_disponibilidad = v_dias_sin_disponibilidad + 1;
+            SET p_disponible = FALSE;
+        END IF;
+        
+        SET v_fecha_actual = DATE_ADD(v_fecha_actual, INTERVAL 1 DAY);
+    END WHILE;
+    
+    IF p_disponible THEN
+        SET p_mensaje = 'Hay disponibilidad para las fechas seleccionadas.';
+    ELSE
+        SET p_mensaje = CONCAT('No hay disponibilidad para ', v_dias_sin_disponibilidad, ' días en el rango seleccionado.');
+    END IF;
+END //
+DELIMITER ;
+
+-- Función para generar código de reserva único
+DELIMITER //
+CREATE FUNCTION fn_generar_codigo_reserva() RETURNS VARCHAR(15)
+BEGIN
+    DECLARE v_codigo VARCHAR(15);
+    DECLARE v_existe INT;
+    
+    SET v_existe = 1;
+    
+    WHILE v_existe > 0 DO
+        -- Formato: RES-YYMMDD-XXXX (donde XXXX es un número aleatorio)
+        SET v_codigo = CONCAT('RES-', DATE_FORMAT(NOW(), '%y%m%d'), '-', 
+                            LPAD(FLOOR(RAND() * 10000), 4, '0'));
+        
+        -- Verificamos si el código ya existe
+        SELECT COUNT * INTO v_existe FROM Reserva WHERE codigo_reserva = v_codigo;
+    END WHILE;
+    
+    RETURN v_codigo;
+END //
+DELIMITER ;
+
+-- Procedimiento para crear una nueva reserva
+DELIMITER //
+CREATE PROCEDURE sp_crear_reserva(
+    IN p_id_participante INT,
+    IN p_id_hotel INT,
+    IN p_id_tipo_habitacion INT,
+    IN p_fecha_arribo DATE,
+    IN p_fecha_salida DATE,
+    IN p_vuelo_arribo VARCHAR(50),
+    IN p_vuelo_salida VARCHAR(50),
+    IN p_early_check_in BOOLEAN,
+    IN p_tipo_tarjeta ENUM('AMEX', 'VISA', 'Mastercard', 'Diners'),
+    IN p_numero_tarjeta VARCHAR(30),
+    IN p_fecha_vencimiento DATE,
+    IN p_nombre_titular VARCHAR(150),
+    OUT p_id_reserva INT,
+    OUT p_codigo_reserva VARCHAR(15),
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_disponible BOOLEAN;
+    DECLARE v_mensaje_disponibilidad VARCHAR(255);
+    DECLARE v_fecha_actual DATE;
+    DECLARE v_total_noches INT;
+    DECLARE v_codigo VARCHAR(15);
+    
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        SET p_mensaje = 'Error al procesar la reserva.';
+        SET p_id_reserva = 0;
+    END;
+    
+    -- Verificamos disponibilidad
+    CALL sp_verificar_disponibilidad(
+        p_id_hotel, 
+        p_id_tipo_habitacion, 
+        p_fecha_arribo, 
+        p_fecha_salida, 
+        v_disponible, 
+        v_mensaje_disponibilidad
+    );
+    
+    IF NOT v_disponible THEN
+        SET p_mensaje = v_mensaje_disponibilidad;
+        SET p_id_reserva = 0;
+    ELSE
+        -- Generamos código de reserva único
+        SET v_codigo = fn_generar_codigo_reserva();
+        
+        -- Iniciamos transacción
+        START TRANSACTION;
+        
+        -- Insertamos la reserva
+        INSERT INTO Reserva(
+            codigo_reserva, id_participante, id_hotel, id_tipo_habitacion,
+            fecha_arribo, fecha_salida, vuelo_arribo, vuelo_salida, early_check_in
+        ) VALUES (
+            v_codigo, p_id_participante, p_id_hotel, p_id_tipo_habitacion,
+            p_fecha_arribo, p_fecha_salida, p_vuelo_arribo, p_vuelo_salida, p_early_check_in
+        );
+        
+        SET p_id_reserva = LAST_INSERT_ID();
+        SET p_codigo_reserva = v_codigo;
+        
+        -- Registramos el método de pago
+        INSERT INTO MetodoPago(
+            id_reserva, tipo_tarjeta, numero_tarjeta, 
+            fecha_vencimiento, nombre_titular
+        ) VALUES (
+            p_id_reserva, p_tipo_tarjeta, p_numero_tarjeta,
+            p_fecha_vencimiento, p_nombre_titular
+        );
+        
+        -- Actualizamos la disponibilidad para cada día
+        SET v_fecha_actual = p_fecha_arribo;
+        WHILE v_fecha_actual < p_fecha_salida DO
+            UPDATE DisponibilidadHabitacion
+            SET habitaciones_ocupadas = habitaciones_ocupadas + 1
+            WHERE id_hotel = p_id_hotel
+            AND id_tipo_habitacion = p_id_tipo_habitacion
+            AND fecha = v_fecha_actual;
+            
+            SET v_fecha_actual = DATE_ADD(v_fecha_actual, INTERVAL 1 DAY);
+        END WHILE;
+        
+        COMMIT;
+        
+        SET p_mensaje = CONCAT('Reserva creada exitosamente con código: ', v_codigo);
+    END IF;
+END //
+DELIMITER ;
+
+-- Procedimiento para asignar habitación específica a una reserva
+DELIMITER //
+CREATE PROCEDURE sp_asignar_habitacion(
+    IN p_id_reserva INT,
+    IN p_id_habitacion INT,
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_estado_habitacion VARCHAR(20);
+    DECLARE v_id_hotel INT;
+    DECLARE v_id_tipo_habitacion INT;
+    DECLARE v_reserva_hotel INT;
+    DECLARE v_reserva_tipo INT;
+    
+    -- Verificamos que la reserva exista
+    SELECT id_hotel, id_tipo_habitacion INTO v_reserva_hotel, v_reserva_tipo
+    FROM Reserva WHERE id_reserva = p_id_reserva;
+    
+    IF v_reserva_hotel IS NULL THEN
+        SET p_mensaje = 'La reserva especificada no existe.';
+    ELSE
+        -- Verificamos que la habitación exista y esté disponible
+        SELECT estado, id_hotel, id_tipo_habitacion 
+        INTO v_estado_habitacion, v_id_hotel, v_id_tipo_habitacion
+        FROM Habitacion WHERE id_habitacion = p_id_habitacion;
+        
+        IF v_estado_habitacion IS NULL THEN
+            SET p_mensaje = 'La habitación especificada no existe.';
+        ELSEIF v_estado_habitacion != 'disponible' THEN
+            SET p_mensaje = 'La habitación no está disponible.';
+        ELSEIF v_id_hotel != v_reserva_hotel THEN
+            SET p_mensaje = 'La habitación no pertenece al hotel de la reserva.';
+        ELSEIF v_id_tipo_habitacion != v_reserva_tipo THEN
+            SET p_mensaje = 'La habitación no es del tipo solicitado en la reserva.';
+        ELSE
+            -- Asignamos la habitación
+            UPDATE Reserva SET id_habitacion = p_id_habitacion WHERE id_reserva = p_id_reserva;
+            
+            -- Actualizamos el estado de la habitación
+            UPDATE Habitacion SET estado = 'ocupada' WHERE id_habitacion = p_id_habitacion;
+            
+            SET p_mensaje = 'Habitación asignada exitosamente.';
+        END IF;
+    END IF;
+END //
+DELIMITER ;
+
+-- Procedimiento para hacer check-in
+DELIMITER //
+CREATE PROCEDURE sp_check_in(
+    IN p_id_reserva INT,
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_estado VARCHAR(20);
+    DECLARE v_id_habitacion INT;
+    
+    SELECT estado_reserva, id_habitacion INTO v_estado, v_id_habitacion
+    FROM Reserva WHERE id_reserva = p_id_reserva;
+    
+    IF v_estado IS NULL THEN
+        SET p_mensaje = 'La reserva especificada no existe.';
+    ELSEIF v_estado != 'confirmada' THEN
+        SET p_mensaje = CONCAT('No se puede hacer check-in. Estado actual: ', v_estado);
+    ELSEIF v_id_habitacion IS NULL THEN
+        SET p_mensaje = 'No hay habitación asignada a esta reserva.';
+    ELSE
+        UPDATE Reserva SET estado_reserva = 'check-in' WHERE id_reserva = p_id_reserva;
+        SET p_mensaje = 'Check-in realizado exitosamente.';
+    END IF;
+END //
+DELIMITER ;
+
+-- Procedimiento para hacer check-out
+DELIMITER //
+CREATE PROCEDURE sp_check_out(
+    IN p_id_reserva INT,
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_estado VARCHAR(20);
+    DECLARE v_id_habitacion INT;
+    
+    SELECT estado_reserva, id_habitacion INTO v_estado, v_id_habitacion
+    FROM Reserva WHERE id_reserva = p_id_reserva;
+    
+    IF v_estado IS NULL THEN
+        SET p_mensaje = 'La reserva especificada no existe.';
+    ELSEIF v_estado != 'check-in' THEN
+        SET p_mensaje = CONCAT('No se puede hacer check-out. Estado actual: ', v_estado);
+    ELSE
+        START TRANSACTION;
+        
+        -- Actualizamos el estado de la reserva
+        UPDATE Reserva SET estado_reserva = 'check-out' WHERE id_reserva = p_id_reserva;
+        
+        -- Liberamos la habitación
+        IF v_id_habitacion IS NOT NULL THEN
+            UPDATE Habitacion SET estado = 'disponible' WHERE id_habitacion = v_id_habitacion;
+        END IF;
+        
+        COMMIT;
+        
+        SET p_mensaje = 'Check-out realizado exitosamente.';
+    END IF;
+END //
+DELIMITER ;
+
+-- Procedimiento para cancelar reserva
+DELIMITER //
+CREATE PROCEDURE sp_cancelar_reserva(
+    IN p_id_reserva INT,
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_estado VARCHAR(20);
+    DECLARE v_id_habitacion INT;
+    DECLARE v_id_hotel INT;
+    DECLARE v_id_tipo_habitacion INT;
+    DECLARE v_fecha_arribo DATE;
+    DECLARE v_fecha_salida DATE;
+    DECLARE v_fecha_actual DATE;
+    
+    -- Obtenemos información de la reserva
+    SELECT estado_reserva, id_habitacion, id_hotel, id_tipo_habitacion, 
+           fecha_arribo, fecha_salida 
+    INTO v_estado, v_id_habitacion, v_id_hotel, v_id_tipo_habitacion,
+         v_fecha_arribo, v_fecha_salida
+    FROM Reserva WHERE id_reserva = p_id_reserva;
+    
+    IF v_estado IS NULL THEN
+        SET p_mensaje = 'La reserva especificada no existe.';
+    ELSEIF v_estado = 'check-out' OR v_estado = 'cancelada' THEN
+        SET p_mensaje = CONCAT('No se puede cancelar. Estado actual: ', v_estado);
+    ELSE
+        START TRANSACTION;
+        
+        -- Actualizamos el estado de la reserva
+        UPDATE Reserva SET estado_reserva = 'cancelada' WHERE id_reserva = p_id_reserva;
+        
+        -- Liberamos la habitación si estaba asignada
+        IF v_id_habitacion IS NOT NULL THEN
+            UPDATE Habitacion SET estado = 'disponible' WHERE id_habitacion = v_id_habitacion;
+        END IF;
+        
+        -- Actualizamos la disponibilidad para cada día
+        SET v_fecha_actual = v_fecha_arribo;
+        WHILE v_fecha_actual < v_fecha_salida DO
+            UPDATE DisponibilidadHabitacion
+            SET habitaciones_ocupadas = habitaciones_ocupadas - 1
+            WHERE id_hotel = v_id_hotel
+            AND id_tipo_habitacion = v_id_tipo_habitacion
+            AND fecha = v_fecha_actual
+            AND habitaciones_ocupadas > 0;
+            
+            SET v_fecha_actual = DATE_ADD(v_fecha_actual, INTERVAL 1 DAY);
+        END WHILE;
+        
+        COMMIT;
+        
+        SET p_mensaje = 'Reserva cancelada exitosamente.';
+    END IF;
+END //
+DELIMITER ;
+
+-- Procedimiento para confirmar reserva
+DELIMITER //
+CREATE PROCEDURE sp_confirmar_reserva(
+    IN p_id_reserva INT,
+    OUT p_mensaje VARCHAR(255)
+)
+BEGIN
+    DECLARE v_estado VARCHAR(20);
+    
+    SELECT estado_reserva INTO v_estado FROM Reserva WHERE id_reserva = p_id_reserva;
+    
+    IF v_estado IS NULL THEN
+        SET p_mensaje = 'La reserva especificada no existe.';
+    ELSEIF v_estado != 'pendiente' THEN
+        SET p_mensaje = CONCAT('No se puede confirmar. Estado actual: ', v_estado);
+    ELSE
+        UPDATE Reserva SET estado_reserva = 'confirmada' WHERE id_reserva = p_id_reserva;
+        SET p_mensaje = 'Reserva confirmada exitosamente.';
+    END IF;
+END //
+DELIMITER ;
+
+-- Procedimiento para obtener disponibilidad por rango de fechas
+DELIMITER //
+CREATE PROCEDURE sp_obtener_disponibilidad(
+    IN p_id_hotel INT,
+    IN p_fecha_inicio DATE,
+    IN p_fecha_fin DATE
+)
+BEGIN
+    SELECT 
+        h.nombre_hotel,
+        th.nombre_tipo,
+        d.fecha,
+        d.habitaciones_existentes,
+        d.habitaciones_ocupadas,
+        d.habitaciones_disponibles,
+        d.temporada,
+        ph.precio_single,
+        ph.precio_doble,
+        ph.precio_twin
+    FROM 
+        DisponibilidadHabitacion d
+    JOIN 
+        Hotel h ON d.id_hotel = h.id_hotel
+    JOIN 
+        TipoHabitacion th ON d.id_tipo_habitacion = th.id_tipo_habitacion
+    LEFT JOIN 
+        PrecioHabitacion ph ON d.id_hotel = ph.id_hotel 
+                           AND d.id_tipo_habitacion = ph.id_tipo_habitacion
+    WHERE 
+        d.id_hotel = p_id_hotel
+        AND d.fecha BETWEEN p_fecha_inicio AND p_fecha_fin
+    ORDER BY 
+        th.nombre_tipo, d.fecha;
+END //
+DELIMITER ;
+
+-- ======== INSERTS INICIALES ========
+
+-- Insertar hoteles
+INSERT INTO Hotel (nombre_hotel, direccion_hotel, contacto_nombre, contacto_cargo, telefono, fax, email) VALUES
+('Plaza San Francisco', 'Alameda 816, Santiago', 'Carmen Angulo', 'Jefa de Convenciones', '56-2-360 4488', '56-2-360 4486', 'cangulo@plazasanfrancisco.cl'),
+('Caesar Business Santiago', 'Av. El Bosque Norte 0115, Santiago', 'Victor Hernández', 'Reservas', '56-2-595 6708', '56-2-595 6704', 'reservas.cbsac@caesarbusiness.com'),
+('Sheraton Santiago', 'Av. Santa María 1742, Santiago', 'María José Castillo', 'Coord. de Grupos', '56-2-707 0690', '56-2-707 0108', 'maria.castillo@sheraton.com'),
+('San Cristóbal Tower', 'Av. Santa María 1742, Santiago', 'María José Castillo', 'Coord. de Grupos', '56-2-707 0690', '56-2-707 0108', 'maria.castillo@sheraton.com');
+
+-- Insertar tipos de habitación
+INSERT INTO TipoHabitacion (nombre_tipo, descripcion, capacidad) VALUES
+('Standard', 'Habitación estándar con todas las comodidades básicas', 2),
+('Classic', 'Habitación clásica con estilo tradicional', 2),
+('Grand Deluxe', 'Habitación de lujo con servicios premium', 2);
+
+-- Insertar precios de habitaciones
+INSERT INTO PrecioHabitacion (id_hotel, id_tipo_habitacion, precio_single, precio_doble, precio_twin) VALUES
+(1, 1, 125.00, 145.00, 145.00), -- Plaza San Francisco - Standard
+(2, 1, 110.00, 120.00, 120.00), -- Caesar Business - Standard
+(3, 2, 155.00, 155.00, 155.00), -- Sheraton - Classic
+(4, 3, 190.00, 190.00, 190.00); -- San Cristóbal Tower - Grand Deluxe
+
+-- Insertar habitaciones (10 para cada hotel y tipo)
+-- Plaza San Francisco - Standard
+INSERT INTO Habitacion (id_hotel, numero_habitacion, id_tipo_habitacion, piso, estado)
+SELECT 1, CONCAT('S', LPAD(n.n, 2, '0')), 1, FLOOR(n.n/5) + 1, 'disponible'
+FROM (
+    SELECT a.N + b.N * 10 + 1 as n
+    FROM (SELECT 0 as N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+         (SELECT 0 as N) b
+    ORDER BY n LIMIT 10
+) n;
+
+-- Caesar Business - Standard
+INSERT INTO Habitacion (id_hotel, numero_habitacion, id_tipo_habitacion, piso, estado)
+SELECT 2, CONCAT('S', LPAD(n.n, 2, '0')), 1, FLOOR(n.n/5) + 1, 'disponible'
+FROM (
+    SELECT a.N + b.N * 10 + 1 as n
+    FROM (SELECT 0 as N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+         (SELECT 0 as N) b
+    ORDER BY n LIMIT 10
+) n;
+
+-- Sheraton - Classic
+INSERT INTO Habitacion (id_hotel, numero_habitacion, id_tipo_habitacion, piso, estado)
+SELECT 3, CONCAT('C', LPAD(n.n, 2, '0')), 2, FLOOR(n.n/5) + 1, 'disponible'
+FROM (
+    SELECT a.N + b.N * 10 + 1 as n
+    FROM (SELECT 0 as N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+         (SELECT 0 as N) b
+    ORDER BY n LIMIT 10
+) n;
+
+-- San Cristóbal Tower - Grand Deluxe
+INSERT INTO Habitacion (id_hotel, numero_habitacion, id_tipo_habitacion, piso, estado)
+SELECT 4, CONCAT('GD', LPAD(n.n, 2, '0')), 3, FLOOR(n.n/5) + 1, 'disponible'
+FROM (
+    SELECT a.N + b.N * 10 + 1 as n
+    FROM (SELECT 0 as N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+         (SELECT 0 as N) b
+    ORDER BY n LIMIT 10
+) n;
+
+-- Generar disponibilidad para los próximos 90 días
+DELIMITER //
+CREATE PROCEDURE sp_generar_disponibilidad_inicial()
+BEGIN
+    DECLARE v_fecha_actual DATE;
+    DECLARE v_fecha_fin DATE;
+    DECLARE v_id_hotel INT;
+    DECLARE v_id_tipo_habitacion INT;
+    DECLARE v_total_habitaciones INT;
+    DECLARE v_temporada VARCHAR(10);
+    
+    DECLARE hotel_cursor CURSOR FOR 
+        SELECT DISTINCT h.id_hotel, th.id_tipo_habitacion
+        FROM Hotel h
+        CROSS JOIN TipoHabitacion th
+        WHERE EXISTS (
+            SELECT 1 FROM PrecioHabitacion ph
+            WHERE ph.id_hotel = h.id_hotel
+            AND ph.id_tipo_habitacion = th.id_tipo_habitacion
+        );
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET @done = TRUE;
+    
+    SET v_fecha_actual = CURDATE();
+    SET v_fecha_fin = DATE_ADD(v_fecha_actual, INTERVAL 90 DAY);
+    
+    OPEN hotel_cursor;
+    
+    hotel_loop: LOOP
+        FETCH hotel_cursor INTO v_id_hotel, v_id_tipo_habitacion;
+        IF @done THEN
+            LEAVE hotel_loop;
+        END IF;
+        
+        -- Contamos cuántas habitaciones hay de este tipo en este hotel
+        SELECT COUNT * INTO v_total_habitaciones
+        FROM Habitacion
+        WHERE id_hotel = v_id_hotel
+        AND id_tipo_habitacion = v_id_tipo_habitacion;
+        
+        -- Generamos disponibilidad para cada día
+        SET @fecha = v_fecha_actual;
+        WHILE @fecha < v_fecha_fin DO
+            -- Determinamos la temporada
+            IF MONTH(@fecha) IN (1, 2, 7, 12) THEN
+                SET v_temporada = 'alta';
+            ELSEIF MONTH(@fecha) IN (6, 8, 11) THEN
+                SET v_temporada = 'especial';
+            ELSE
+                SET v_temporada = 'baja';
+            END IF;
+            
+            -- Insertamos el registro de disponibilidad
+            INSERT INTO DisponibilidadHabitacion
+                (id_hotel, id_tipo_habitacion, fecha, habitaciones_existentes, habitaciones_ocupadas, temporada)
+            VALUES
+                (v_id_hotel, v_id_tipo_habitacion, @fecha, v_total_habitaciones, 0, v_temporada);
+                
+            SET @fecha = DATE_ADD(@fecha, INTERVAL 1 DAY);
+        END WHILE;
+    END LOOP;
+    
+    CLOSE hotel_cursor;
+END //
+DELIMITER ;
+
+-- Ejecutamos el procedimiento para generar disponibilidad inicial
+CALL sp_generar_disponibilidad_inicial();
+
+-- Eliminamos el procedimiento temporal
+DROP PROCEDURE sp_generar_disponibilidad_inicial;
+
+
