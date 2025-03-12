@@ -1,0 +1,34 @@
+DELIMITER //
+CREATE FUNCTION fn_get_producto (p_valor1 DOUBLE, p_valor2 DOUBLE)
+RETURNS DOUBLE DETERMINISTIC
+BEGIN
+	DECLARE producto DOUBLE;
+    
+    SET producto = p_valor1 * p_valor2;
+    RETURN producto;
+    
+END;
+
+
+SELECT fn_get_producto(3, 3 ) producto;
+
+SELECT * FROM financialsample;
+
+SELECT Product, (UnitsSold*SalePrice) VTA FROM financialsample;
+
+/*DIVISIÓN 0*/
+DELIMITER //
+CREATE FUNCTION fn_zero_division (p_valor1 DOUBLE, p_valor2 DOUBLE)
+RETURNS DOUBLE DETERMINISTIC
+BEGIN
+	DECLARE division DOUBLE DEFAULT 0;
+    
+    IF p_valor2 != 0 then
+		SET division = p_valor1 / p_valor2;
+    END IF;
+
+    RETURN division;
+    
+END;
+
+SELECT fn_get_producto(10, 0 ) division;
